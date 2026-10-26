@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from services.payments.api.dependencies import dependencies_ready
 from services.payments.app import create_app
 from services.payments.settings import Settings
 
@@ -16,7 +17,9 @@ def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     ("path", "expected_status"), [("/health", "ok"), ("/ready", "ready")]
 )
 def test_operational_endpoint_returns_status(path: str, expected_status: str) -> None:
-    with TestClient(create_app(Settings(environment="test"))) as client:
+    app = create_app(Settings(environment="test"))
+    app.dependency_overrides[dependencies_ready] = lambda: True
+    with TestClient(app) as client:
         response = client.get(path)
 
     assert response.status_code == 200
@@ -64,7 +67,7 @@ def test_factory_rejects_invalid_environment_configuration(
 
 
 def test_factory_creates_independent_app_instances() -> None:
-    first = create_app(Settings(environment="local"))
+    first = create_app(Settings(environment="development"))
     second = create_app(Settings(environment="production"))
     first.state.settings.environment = "test"
     first.state.marker = "first-only"
@@ -100,3 +103,14 @@ def test_operational_endpoints_are_only_unversioned(path: str) -> None:
         response = client.get(path)
 
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("reachable", [True, False])
+def test_readiness_reports_dependency_availability(reachable: bool) -> None:
+    app = create_app(Settings(environment="test"))
+    app.dependency_overrides[dependencies_ready] = lambda: reachable
+    with TestClient(app) as client:
+        response = client.get("/ready", headers={"X-Request-ID": "readiness"})
+    assert response.status_code == (200 if reachable else 503)
+    assert response.json() == {"status": "ready" if reachable else "not_ready"}
+    assert response.headers["X-Request-ID"] == "readiness"

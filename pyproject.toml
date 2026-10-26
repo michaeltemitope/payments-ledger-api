@@ -4,9 +4,13 @@ version = "0.1.0"
 description = "Payments and ledger API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic==1.20.1",
     "fastapi==0.162.0",
+    "psycopg[binary]==3.3.6",
     "pydantic==2.14.1",
     "pydantic-settings==2.16.1",
+    "redis==8.1.0",
+    "sqlalchemy==2.1.6",
     "uvicorn==0.54.0",
 ]
 
@@ -26,7 +30,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit"]
+testpaths = ["tests/unit", "tests/integration"]
 pythonpath = ["."]
 addopts = "--strict-config --strict-markers"
 
