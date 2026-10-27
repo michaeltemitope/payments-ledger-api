@@ -2,41 +2,41 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-27
-- **Deciders:** Project owner
+- **Decided by:** Project owner
 
 ## Context
 
-Every payment, refund and ledger entry carries an amount. Amounts must be exact: no rounding errors, and sums must match to the last unit. Currencies differ in how many decimal places they use (for example, two for USD, zero for JPY, three for KWD), so the representation must not assume two decimals.
+Every payment, refund and ledger entry in this project has an amount, and money is the one thing I can't be roughly right about. Amounts have to be exact, and sums have to match to the last unit. On top of that, currencies don't all use two decimal places: the US dollar uses two, the Japanese yen uses none, and the Kuwaiti dinar uses three. Whatever I choose can't assume two decimals.
 
-## Options considered
+## Options I considered
 
-| Option | Trade-offs |
-|---|---|
-| Integer minor units plus an ISO 4217 currency code | Exact arithmetic and simple comparisons. Needs the currency's exponent to display an amount. |
-| Decimal major units (for example `NUMERIC(19,4)`) plus a currency code | Also exact in the database, but invites rounding when values pass through code or JSON, and the scale must be chosen and enforced everywhere. |
-| Floating point | Cannot represent many decimal amounts exactly, so rounding errors appear. Rejected outright for money. |
+**Integer minor units plus a currency code.** The amount is a whole number of the smallest unit (cents, for example) and the currency is an ISO 4217 code such as `USD`. Arithmetic is exact and comparisons are simple. The catch is that I need to know a currency's number of decimals when I show an amount to a person.
+
+**Decimal major units plus a currency code.** Something like `NUMERIC(19,4)` in the database. It is also exact in storage, but it invites rounding as soon as the value passes through application code or JSON, and I would have to choose and enforce the scale everywhere.
+
+**Floating point.** It can't represent many decimal amounts exactly, so rounding errors creep in. I ruled this out immediately for money.
 
 ## Decision
 
-Store and calculate every amount as an **integer number of minor units** (for example cents), in a `bigint` column, together with an **ISO 4217 currency code** (three uppercase letters). Payment and ledger amounts must be positive. The database enforces this with CHECK constraints, and the API validates it before reaching the database. The column is named `amount`, and its unit is always minor units.
+I store and calculate every amount as an **integer number of minor units**, in a `bigint` column, next to an **ISO 4217 currency code** (three uppercase letters). Amounts on payments and ledger entries must be positive. The database enforces that with CHECK constraints, and the API validates it before a request gets that far.
+
+The column is simply called `amount`, and its unit is always minor units. The name doesn't say so, so this decision and the API documentation have to.
 
 ## Why
 
-- Integer arithmetic is exact, so debits and credits can be compared and summed without rounding.
-- It is how payment providers represent amounts, which keeps later integrations simple.
-- Integers avoid the precision and formatting problems that decimals and floats cause when values pass through JSON and different languages.
-- `bigint` holds far more than any realistic payment amount.
+- Whole-number arithmetic is exact. When I get to the ledger, checking that debits equal credits is a plain comparison with no rounding rules to argue about.
+- It matches how payment providers represent amounts, which keeps later integrations simple.
+- Integers survive trips through JSON and between languages without the precision and formatting surprises that decimals and floats cause.
+- A `bigint` is far larger than any real payment amount.
 
 ## Consequences
 
-**Positive**
+**What this gives me**
 
-- Ledger balance checks are exact comparisons.
-- No rounding rules to maintain inside the payment logic.
+- Exact ledger checks and no rounding logic inside the payment code.
 
-**Negative and follow-ups**
+**What I have to handle**
 
-- Display and input conversion must use each currency's exponent, and only at the edges of the system (API input and presentation).
-- JSON numbers lose precision beyond a safe integer range in some clients, so an upper limit on the amount must be decided and enforced at the API boundary.
-- Currency conversion between currencies is out of scope for this project.
-- The column name does not carry the unit, so this ADR and the API documentation must state it.
+- Converting between minor units and a displayed amount needs each currency's number of decimals, and it should only happen at the edges of the system: when input arrives and when output is shown.
+- Some JSON clients lose precision on very large integers, so I need to decide on an upper limit for amounts and enforce it at the API boundary. I haven't set that limit yet.
+- Converting between currencies is out of scope for this project.
