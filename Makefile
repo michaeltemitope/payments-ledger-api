@@ -11,7 +11,7 @@ test-unit:
 	uv run --locked pytest tests/unit
 
 test-integration:
-	uv run --locked pytest tests/integration
+	uv run --locked --env-file .env pytest tests/integration
 
 test: test-unit test-integration
 
