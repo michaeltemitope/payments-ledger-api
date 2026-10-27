@@ -1,31 +1,42 @@
-# ADR-002: Money representation
+# ADR-002: Money as integer minor units
 
-- **Status:** Draft — owner decision pending
+- **Status:** Accepted
+- **Date:** 2026-10-27
+- **Deciders:** Project owner
 
 ## Context
 
-Payment amounts must preserve exact values through JSON, Python and PostgreSQL.
-Binary floating point cannot represent every decimal amount exactly. Currencies
-have different minor-unit conventions; this API receives already-denominated
-minor units and does not perform major-unit conversions.
+Every payment, refund and ledger entry carries an amount. Amounts must be exact: no rounding errors, and sums must match to the last unit. Currencies differ in how many decimal places they use (for example, two for USD, zero for JPY, three for KWD), so the representation must not assume two decimals.
 
-## Options
+## Options considered
 
-- Integer minor units plus ISO 4217 code: exact arithmetic and straightforward
-  database constraints; clients must know the currency's minor-unit convention.
-- Decimal major units plus ISO 4217 code: familiar human representation; requires
-  explicit precision, scale, rounding and serialization rules.
-- Floating point: familiar JSON representation, but unsuitable for exact money.
+| Option | Trade-offs |
+|---|---|
+| Integer minor units plus an ISO 4217 currency code | Exact arithmetic and simple comparisons. Needs the currency's exponent to display an amount. |
+| Decimal major units (for example `NUMERIC(19,4)`) plus a currency code | Also exact in the database, but invites rounding when values pass through code or JSON, and the scale must be chosen and enforced everywhere. |
+| Floating point | Cannot represent many decimal amounts exactly, so rounding errors appear. Rejected outright for money. |
 
 ## Decision
 
-To be written by the owner in their own words.
+Store and calculate every amount as an **integer number of minor units** (for example cents), in a `bigint` column, together with an **ISO 4217 currency code** (three uppercase letters). Payment and ledger amounts must be positive. The database enforces this with CHECK constraints, and the API validates it before reaching the database. The column is named `amount`, and its unit is always minor units.
 
-## Consequences to consider
+## Why
 
-The implementation follows the Phase 1 requirement: positive integer minor units
-stored in PostgreSQL bigint, validated before database access, paired with an
-uppercase ISO 4217 code. Values exceeding bigint are rejected, as are booleans,
-strings and floats. Currency reference data needs deliberate updates. Clients
-using JavaScript must preserve integer precision for values above its safe integer
-range; this part has no conversion or exchange-rate behavior.
+- Integer arithmetic is exact, so debits and credits can be compared and summed without rounding.
+- It is how payment providers represent amounts, which keeps later integrations simple.
+- Integers avoid the precision and formatting problems that decimals and floats cause when values pass through JSON and different languages.
+- `bigint` holds far more than any realistic payment amount.
+
+## Consequences
+
+**Positive**
+
+- Ledger balance checks are exact comparisons.
+- No rounding rules to maintain inside the payment logic.
+
+**Negative and follow-ups**
+
+- Display and input conversion must use each currency's exponent, and only at the edges of the system (API input and presentation).
+- JSON numbers lose precision beyond a safe integer range in some clients, so an upper limit on the amount must be decided and enforced at the API boundary.
+- Currency conversion between currencies is out of scope for this project.
+- The column name does not carry the unit, so this ADR and the API documentation must state it.
