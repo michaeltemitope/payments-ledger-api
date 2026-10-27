@@ -55,7 +55,7 @@ def test_missing_or_invalid_request_id_is_replaced_with_uuid(
         [] if request_id is None else [(b"X-Request-ID", request_id.encode("latin1"))]
     )
     with TestClient(app) as client:
-        response = client.get("/ready", headers=headers)
+        response = client.get("/health", headers=headers)
 
     generated = response.headers["X-Request-ID"]
     assert str(UUID(generated)) == generated

@@ -15,6 +15,7 @@ def main() -> None:
     # Middleware supplies access logs without Uvicorn's raw paths and query strings.
     uvicorn.run(
         app,
+        host=settings.listen_host,
         log_config=create_server_log_config(settings.log_level, request_id),
         access_log=False,
     )
