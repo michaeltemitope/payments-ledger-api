@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, field_validator
 
 from services.payments.api.dependencies import get_payment_service
 from services.payments.api.errors import ErrorResponse
@@ -18,7 +18,7 @@ class CreatePaymentRequest(BaseModel):
     amount: Annotated[StrictInt, Field(gt=0, le=MAX_AMOUNT)]
     currency: str = Field(
         pattern="^[A-Z]{3}$",
-        json_schema_extra={"enum": [code for code in sorted(ISO_4217_CODES)]},
+        json_schema_extra={"enum": cast(JsonValue, sorted(ISO_4217_CODES))},
     )
 
     @field_validator("currency")
