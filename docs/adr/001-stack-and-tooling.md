@@ -1,104 +1,83 @@
 # ADR-001: Stack and tooling
 
-- **Status:** Accepted
-- **Date:** 2026-10-26
-- **Deciders:** Project owner
+- **Status:** Accepted (amended after part 1b)
+- **Date:** 2026-10-26, amended 2026-10-27
+- **Decided by:** Project owner
 
 ## Context
 
-This project is a small payments and ledger API. Phase 1 has to give the rest of the project (idempotency, ledger, outbox, observability, API versioning) a base that does not need to be reworked later.
+This project is a small payments and ledger API. Before I write any real features, I want a base I won't regret later, because idempotency, the ledger, the outbox, monitoring and API versioning will all sit on top of it.
 
-What matters most, in order:
+What I care about, roughly in this order:
 
-1. **Correctness.** The code handles money and payment state, so wrong types and silent errors are expensive.
-2. **Reproducibility.** The same install must work on my machine, for the coding agent, and in CI.
-3. **Fast feedback.** Lint, type checks and unit tests must run in seconds.
-4. **Clarity.** Transactions and failure handling must be easy to read and reason about.
-5. **Small toolset.** Every tool must be one I can explain and maintain.
+1. **Correctness.** The code handles money and payment state, so a wrong type or a silent error costs more than usual.
+2. **Reproducibility.** The same install has to work on my machine, for Codex, and in CI.
+3. **Fast feedback.** Lint, type checks and unit tests should finish in seconds, or I'll stop running them.
+4. **Clarity.** I want transactions and failure handling to be easy to read.
+5. **A small toolset.** Every tool should be one I can explain and maintain.
 
-Fixed by the project: Python 3.12, FastAPI, PostgreSQL, Redis, Docker and GitHub Actions. Development happens in WSL, with a coding agent (Codex) working in small, reviewed steps.
+The project already fixes Python 3.12, FastAPI, PostgreSQL, Redis, Docker and GitHub Actions. I work in WSL, and Codex does the typing in small steps that I review.
 
 ## Decisions
 
-### 1. Dependency manager: uv
+### Dependency manager: uv
 
-| Option | Trade-offs |
-|---|---|
-| uv | One tool for the Python version, the virtual environment and the lockfile. Fast. Newer than the alternatives. |
-| Poetry | Mature and integrated, but brings its own workflow and conventions. |
-| pip + pip-tools | Familiar, but the environment and lock generation are managed by hand. |
+I looked at uv, Poetry, and pip with pip-tools. Poetry is mature, but it brings its own workflow and conventions. pip-tools is familiar, but I would be managing the environment and the lock generation by hand.
 
-**Decision:** uv, with exact version pins for direct dependencies and a committed `uv.lock`. Every command runs with `uv run --locked`, so it fails if the lockfile is out of date, locally and in CI.
+I chose **uv**, with exact version pins for direct dependencies and a committed `uv.lock`. Every command runs with `uv run --locked`, so a stale lockfile makes things fail loudly instead of quietly drifting. One tool gives me, Codex and CI the same environment. The price is that uv is newer than the alternatives, so I had to learn it.
 
-**Why:** one tool gives everyone the same environment, and a stale lockfile cannot slip through unnoticed.
+### Linting and formatting: Ruff
 
-### 2. Linting and formatting: Ruff
+The alternatives were Ruff for linting plus Black for formatting, or the older Flake8, Black and isort combination. Both mean more tools and more configuration for the same result.
 
-| Option | Trade-offs |
-|---|---|
-| Ruff (lint, import sorting, format) | One tool and one config. Very fast. Rule selection needs care. |
-| Ruff lint + Black | Separate responsibilities, but an extra tool. |
-| Flake8 + Black + isort | Specialized tools, but more dependencies and more config to maintain. |
+I chose **Ruff** for linting, import sorting and formatting. I picked the rules on purpose instead of accepting the defaults: `E`, `F`, `I`, `UP`, `B`, `S`, `C4`, `SIM` and `PT`. I added the security rules (`S`) after part 1a, because a payments service should catch things like weak randomness or unsafe SQL building early. Asserts and fake passwords are normal in tests, so `S101`, `S105` and `S106` are ignored in tests only. Any other ignored rule needs a written reason next to it.
 
-**Decision:** Ruff for linting, import sorting and formatting. The rule set is selected explicitly in `pyproject.toml` (not just the defaults) and covers common bug patterns, import order, outdated syntax and security checks. Any ignored rule needs a written reason next to it.
+### Type checking: mypy in strict mode
 
-**Why:** the smallest toolset that covers all three jobs, and explicit rules mean lint failures mean something.
+Pyright is a good checker with excellent editor support, but its command line needs a Node-based toolchain or a wrapper. I would rather keep the whole workflow in Python.
 
-### 3. Type checking: mypy in strict mode
+I chose **mypy in strict mode**, with the Pydantic plugin, covering both the application and the tests. Money amounts, payment states and idempotency records are exactly where a wrong type turns into a real bug, and I want the checker to catch it before the code runs.
 
-| Option | Trade-offs |
-|---|---|
-| mypy (strict) | Python-native workflow, configurable. Framework typing sometimes needs configuration. |
-| Pyright | Strong inference and editor support, but its command line adds a Node-based toolchain or wrapper. |
+### Database access: synchronous SQLAlchemy with psycopg 3
 
-**Decision:** mypy in strict mode, covering application code and tests.
+I considered synchronous and asynchronous SQLAlchemy. Async fits asynchronous I/O, but it needs explicit awaits, careful session lifetimes, and care to avoid implicit lazy loading.
 
-**Why:** money amounts, payment states and idempotency records are where a wrong type causes real bugs, and I want the checker to catch them before runtime.
+I chose **synchronous SQLAlchemy 2.x**, and in part 1b I picked **psycopg 3** as the driver. My reasoning:
 
-### 4. Database access: synchronous SQLAlchemy (from part 1b)
+- This API is database-bound. Each request is a short transaction, so the real ceiling on concurrency is the connection pool and PostgreSQL's connection limit. Async code does not raise that ceiling.
+- Idempotency, ledger writes and the outbox depend on explicit transactions, unique constraints and row locks. Synchronous code keeps those boundaries easy to read, test and debug.
+- The outbox relay and the consumer will be separate processes, so they don't depend on how the web framework handles concurrency.
 
-| Option | Trade-offs |
-|---|---|
-| Sync SQLAlchemy 2.x | Straightforward transactions and debugging. Blocking calls run in FastAPI's worker threadpool. |
-| Async SQLAlchemy 2.x | Fits asynchronous I/O, but needs explicit awaits, careful session lifetimes and avoiding implicit lazy loading. |
+The risk is that synchronous endpoints run on a bounded worker threadpool (40 threads by default), so the pool size and the thread limit have to be set together. I would only reconsider async if load testing in part 6a shows requests waiting for threads while the database pool still has room.
 
-**Decision:** synchronous SQLAlchemy. No database code is written in part 1a. The PostgreSQL driver is chosen in part 1b.
+### Supporting libraries
 
-**Why:**
-- The API is database-bound: each request is a short transaction. The real concurrency ceiling is the connection pool and PostgreSQL's connection limit, and async code does not raise that ceiling.
-- Idempotency, ledger writes and the outbox depend on explicit transactions, unique constraints and row locks. Synchronous code keeps the transaction boundaries and failure paths easy to read, test and debug.
-- The outbox relay and the consumer are separate processes, so they do not depend on the web framework's concurrency model.
+- **pydantic-settings** for typed configuration that fails fast when a required setting is missing.
+- **uvicorn** to serve the app.
+- **httpx and httpx2** for endpoint tests. Newer versions of Starlette prefer `httpx2` for their test client and warn when they fall back to `httpx`. I added `httpx2` to the dev dependencies to remove the warning, and kept `httpx` because my tests import it directly.
+- **Standard-library JSON logging** instead of a logging dependency, configured by the application with no global side effects. I considered structlog and might adopt it later if I need richer log processing.
 
-**Risk and revisit trigger:** synchronous endpoints run on a bounded worker threadpool (40 threads by default), so the pool size and the thread limit must be set together. Reconsider async only if load testing (part 6a) shows requests queueing on threads while the database pool still has headroom.
+### Tests and quality gates
 
-### 5. Supporting libraries
+I use **pytest** for everything, split into unit tests that need no services and integration tests that run against real PostgreSQL and Redis, with no mocks for the database. `make lint` and `make test-unit` run the same checks locally and in CI. A coverage gate comes in part 2c.
 
-- `pydantic-settings` for typed configuration that fails fast when required settings are missing.
-- `uvicorn` to serve the app.
-- `httpx` for in-process endpoint tests.
-- Standard-library JSON logging instead of a logging dependency, with application-owned configuration and no global side effects. A library such as structlog was considered, and can be adopted later if richer log processing is needed.
-
-### 6. Test and quality gates
-
-**Decision:** pytest for all tests, split into unit tests (no services needed) and integration tests (real PostgreSQL and Redis, no mocks for the database). `make lint` and `make test-unit` run the same checks locally and in CI. A coverage gate is added in part 2c.
-
-**Why:** unit tests stay fast enough to run constantly, integration tests stay honest about database behavior, and the same gates run everywhere so a green local run means a green CI run.
+Unit tests stay fast enough to run constantly, integration tests stay honest about how the database really behaves, and the same checks run everywhere, so a green local run should mean a green CI run.
 
 ## Consequences
 
-**Positive**
+**What this gives me**
 
-- Reproducible installs and a small, understandable toolset.
-- Strict typing and fast linting from the first commit.
-- Simple, readable transaction handling.
+- Reproducible installs and a toolset small enough to understand fully.
+- Strict typing and security-aware linting from the first commit.
+- Transaction code that is simple to read.
 
-**Negative and risks**
+**What it costs me**
 
-- uv is newer than Poetry or pip-tools, so its commands must be learned.
-- Synchronous endpoints have a bounded threadpool, as described above.
-- A deprecation warning from `httpx` appeared in part 1a and must be resolved when dependencies are upgraded.
+- uv is newer than Poetry or pip-tools, so I have to learn its commands.
+- Synchronous endpoints share a bounded threadpool, as described above.
+- Two HTTP client packages sit in the dev dependencies until my tests move fully to `httpx2`.
 
-**Revisit when**
+**When I would revisit this**
 
-- Load testing (part 6a) shows threadpool saturation, as described in decision 4.
-- A tool in this list becomes a maintenance burden or blocks a later phase.
+- If load testing (part 6a) shows threadpool saturation.
+- If any tool becomes a maintenance burden or gets in the way of a later phase.
