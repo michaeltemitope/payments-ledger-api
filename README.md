@@ -5,7 +5,6 @@ with Redis and PostgreSQL readiness checks. The current API creates payments wit
 status `created`. Idempotency enforcement, payment transitions, ledger writes, and
 event publishing are planned; they are not implemented yet.
 
-See [AGENTS.md](AGENTS.md) for the current phase, scope, and contributor rules.
 Design decisions live in [ADR-001: stack and tooling](docs/adr/001-stack-and-tooling.md),
 [ADR-002: money](docs/adr/002-money-minor-units.md), and
 [ADR-003: database transactions](docs/adr/003-database-transactions.md).
@@ -62,16 +61,21 @@ make lint
 make test-unit
 ```
 
-After the owner has run `make up` and `make migrate`:
+Start the services with `make up`, run `make migrate`, then export
+the local environment and run the integration tests:
 
 ```sh
+set -a
+. ./.env
+set +a
 make test-integration
 ```
 
-This target loads `.env` itself, so no shell export is needed. It uses
-`PAYMENTS_TEST_DATABASE_URL` and `PAYMENTS_TEST_REDIS_URL`. The example selects
-`payments_test`, separate from `payments`; the existing safety guard still applies.
-See [environment and verification rules](AGENTS.md#environment-and-verification).
+The target also loads `.env`; exported variables take precedence. Integration
+tests use real PostgreSQL and Redis through `PAYMENTS_TEST_DATABASE_URL` and
+`PAYMENTS_TEST_REDIS_URL`. The test database name must end in `_test` and differ
+from the application database name. The example selects `payments_test`,
+separate from `payments`.
 
 The integration suite applies migrations, reverses and reapplies them, and deletes
 payment data in its test database. Use a disposable database with no other clients
@@ -97,8 +101,18 @@ curl -i -X POST http://127.0.0.1:8000/v1/payments \
 ```
 
 Follow the returned `Location` path with a GET at the same base address. See the
-running app's `/docs` for request/response schemas and
-[API standards](AGENTS.md#api-standards) for status and request-ID conventions.
+running app's `/docs` for request/response schemas. Payment creation returns 201
+with a `Location` header; retrieving a missing payment returns 404, and invalid
+request data returns 422.
+
+`/health` returns 200 when the process is up. `/ready` returns 200 when PostgreSQL
+and Redis are reachable, or 503 when either dependency is unavailable.
+
+Requests accept an `X-Request-ID` containing 1 to 128 ASCII letters, digits, `.`,
+`_`, or `-`; a missing or invalid value is replaced with a generated UUID.
+The request ID is included in request logs and returned in the `X-Request-ID`
+response header.
+
 No idempotency header is processed yet, and creation writes no ledger entries.
 
 For amount units, see [ADR-002](docs/adr/002-money-minor-units.md). Accepted amounts
