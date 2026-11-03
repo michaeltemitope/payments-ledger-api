@@ -128,9 +128,15 @@ are limited to `contents: read`, and superseded runs for the same PR are cancell
 Persistent action caches are disabled. The workflow builds locally without
 publishing an image or deploying anything.
 
+### Security scanning policy
+
 Trivy scans OS and application-library vulnerabilities in the final runtime image.
-HIGH and CRITICAL findings fail the job, including findings without fixes. The
-scan has a five-minute timeout; scanner errors also fail the job. Results appear
-in job logs. Builder-only and development dependencies are outside this image scan.
+The gate fails on HIGH and CRITICAL findings with an available fix (exit code 1,
+`ignore-unfixed: true`). It deliberately ignores unfixed findings because no
+package fix is available to apply. A separate report-only scan of the same image
+(exit code 0, `ignore-unfixed: false`) logs all HIGH and CRITICAL findings,
+including unfixed ones. Each scan has a five-minute timeout; scanner errors in
+the gate also fail the job. Builder-only and development dependencies are outside
+this image scan.
 The workflow file is the source of truth for versions and scan settings; its
 presence does not establish that a GitHub run has passed.

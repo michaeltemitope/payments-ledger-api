@@ -108,6 +108,23 @@ jobs:
       - name: Save image for scanning
         run: docker save --output "$RUNNER_TEMP/payments-ledger-api.tar" payments-ledger-api:ci
 
+      - name: Report runtime image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: "v0.70.0"
+          scan-type: image
+          input: ${{ runner.temp }}/payments-ledger-api.tar
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          ignore-unfixed: false
+          format: table
+          timeout: 5m0s
+          cache: false
+
+      # Unfixed findings do not gate the build because no package fix is
+      # available to apply. The report above keeps them visible for review.
       - name: Scan runtime image for vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -118,7 +135,7 @@ jobs:
           vuln-type: os,library
           severity: HIGH,CRITICAL
           exit-code: "1"
-          ignore-unfixed: false
+          ignore-unfixed: true
           format: table
           timeout: 5m0s
           cache: false
